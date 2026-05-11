@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging.Abstractions;
 using UserApiLogin.Controllers;
 using UserApiLogin.DTOs;
 using UserApiLogin.Models;
@@ -30,7 +31,7 @@ public class AuthControllerTests
     private AuthController CriarController(string dbName)
     {
         var context = DbContextHelper.CreateInMemoryContext(dbName);
-        return new AuthController(context, _tokenService);
+        return new AuthController(context, _tokenService, NullLogger<AuthController>.Instance);
     }
 
     // ── Login ──────────────────────────────────────────────────────────────
@@ -49,7 +50,7 @@ public class AuthControllerTests
         });
         await context.SaveChangesAsync();
 
-        var controller = new AuthController(context, _tokenService);
+        var controller = new AuthController(context, _tokenService, NullLogger<AuthController>.Instance);
         var dto = new LoginDto { Email = "joao@email.com", Password = senha };
 
         var result = await controller.Login(dto);
@@ -82,7 +83,7 @@ public class AuthControllerTests
         });
         await context.SaveChangesAsync();
 
-        var controller = new AuthController(context, _tokenService);
+        var controller = new AuthController(context, _tokenService, NullLogger<AuthController>.Instance);
         var dto = new LoginDto { Email = "ana@email.com", Password = "senhaErrada" };
 
         var result = await controller.Login(dto);
@@ -104,13 +105,12 @@ public class AuthControllerTests
         });
         await context.SaveChangesAsync();
 
-        var controller = new AuthController(context, _tokenService);
+        var controller = new AuthController(context, _tokenService, NullLogger<AuthController>.Instance);
         var dto = new LoginDto { Email = "maria@email.com", Password = senha };
 
         var result = await controller.Login(dto);
 
         var ok = Assert.IsType<OkObjectResult>(result);
-        // Verifica que o objeto de resposta contém as propriedades esperadas via reflexão
         var value = ok.Value!;
         var tokenProp = value.GetType().GetProperty("token");
         var userProp  = value.GetType().GetProperty("user");

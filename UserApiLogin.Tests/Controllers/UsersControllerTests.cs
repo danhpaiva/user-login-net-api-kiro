@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Caching.Memory;
+using Microsoft.Extensions.Logging.Abstractions;
 using UserApiLogin.Controllers;
 using UserApiLogin.DTOs;
 using UserApiLogin.Models;
@@ -15,7 +16,7 @@ public class UsersControllerTests
     private UsersController CriarController(string? dbName = null)
     {
         var context = DbContextHelper.CreateInMemoryContext(dbName ?? Guid.NewGuid().ToString());
-        return new UsersController(context, CreateCache());
+        return new UsersController(context, CreateCache(), NullLogger<UsersController>.Instance);
     }
 
     // ── GetAll ─────────────────────────────────────────────────────────────
@@ -43,7 +44,7 @@ public class UsersControllerTests
         );
         await context.SaveChangesAsync();
 
-        var controller = new UsersController(context, CreateCache());
+        var controller = new UsersController(context, CreateCache(), NullLogger<UsersController>.Instance);
         var result = await controller.GetAll();
 
         var ok = Assert.IsType<OkObjectResult>(result);
@@ -59,7 +60,7 @@ public class UsersControllerTests
         context.Users.Add(new User { Name = "Teste", Email = "t@t.com", Password = "hash_secreto" });
         await context.SaveChangesAsync();
 
-        var controller = new UsersController(context, CreateCache());
+        var controller = new UsersController(context, CreateCache(), NullLogger<UsersController>.Instance);
         var result = await controller.GetAll();
 
         var ok = Assert.IsType<OkObjectResult>(result);
@@ -75,7 +76,7 @@ public class UsersControllerTests
             context.Users.Add(new User { Name = $"User{i}", Email = $"user{i}@email.com", Password = "hash" });
         await context.SaveChangesAsync();
 
-        var controller = new UsersController(context, CreateCache());
+        var controller = new UsersController(context, CreateCache(), NullLogger<UsersController>.Instance);
 
         // Página 1 com 10 itens
         var result1 = await controller.GetAll(page: 1, pageSize: 10);
@@ -124,7 +125,7 @@ public class UsersControllerTests
         await context.SaveChangesAsync();
 
         var cache = CreateCache();
-        var controller = new UsersController(context, cache);
+        var controller = new UsersController(context, cache, NullLogger<UsersController>.Instance);
 
         // Primeira chamada — popula o cache
         await controller.GetAll();
@@ -145,7 +146,7 @@ public class UsersControllerTests
     {
         var context = DbContextHelper.CreateInMemoryContext();
         var cache = CreateCache();
-        var controller = new UsersController(context, cache);
+        var controller = new UsersController(context, cache, NullLogger<UsersController>.Instance);
 
         // Popula o cache com lista vazia
         await controller.GetAll();
@@ -169,7 +170,7 @@ public class UsersControllerTests
         context.Users.Add(new User { Id = 1, Name = "Carlos", Email = "carlos@email.com", Password = "hash" });
         await context.SaveChangesAsync();
 
-        var controller = new UsersController(context, CreateCache());
+        var controller = new UsersController(context, CreateCache(), NullLogger<UsersController>.Instance);
         var result = await controller.GetById(1);
 
         var ok = Assert.IsType<OkObjectResult>(result);
@@ -196,7 +197,7 @@ public class UsersControllerTests
         await context.SaveChangesAsync();
 
         var cache = CreateCache();
-        var controller = new UsersController(context, cache);
+        var controller = new UsersController(context, cache, NullLogger<UsersController>.Instance);
 
         // Primeira chamada — popula o cache
         await controller.GetById(1);
@@ -236,7 +237,7 @@ public class UsersControllerTests
         context.Users.Add(new User { Name = "Existente", Email = "dup@email.com", Password = "hash" });
         await context.SaveChangesAsync();
 
-        var controller = new UsersController(context, CreateCache());
+        var controller = new UsersController(context, CreateCache(), NullLogger<UsersController>.Instance);
         var dto = new RegisterDto { Name = "Outro", Email = "dup@email.com", Password = "senha123" };
 
         var result = await controller.Create(dto);
@@ -248,7 +249,7 @@ public class UsersControllerTests
     public async Task Create_DeveSalvarSenhaHasheada()
     {
         var context = DbContextHelper.CreateInMemoryContext();
-        var controller = new UsersController(context, CreateCache());
+        var controller = new UsersController(context, CreateCache(), NullLogger<UsersController>.Instance);
         var dto = new RegisterDto { Name = "Hash", Email = "hash@email.com", Password = "senhaPlana" };
 
         await controller.Create(dto);
@@ -267,7 +268,7 @@ public class UsersControllerTests
         context.Users.Add(new User { Id = 1, Name = "Antigo", Email = "antigo@email.com", Password = "hash" });
         await context.SaveChangesAsync();
 
-        var controller = new UsersController(context, CreateCache());
+        var controller = new UsersController(context, CreateCache(), NullLogger<UsersController>.Instance);
         var dto = new RegisterDto { Name = "Novo Nome", Email = "novo@email.com", Password = "novaSenha" };
 
         var result = await controller.Update(1, dto);
@@ -299,7 +300,7 @@ public class UsersControllerTests
         );
         await context.SaveChangesAsync();
 
-        var controller = new UsersController(context, CreateCache());
+        var controller = new UsersController(context, CreateCache(), NullLogger<UsersController>.Instance);
         var dto = new RegisterDto { Name = "User1 Atualizado", Email = "user2@email.com", Password = "senha" };
 
         var result = await controller.Update(1, dto);
@@ -314,7 +315,7 @@ public class UsersControllerTests
         context.Users.Add(new User { Id = 1, Name = "User1", Email = "user1@email.com", Password = "hash" });
         await context.SaveChangesAsync();
 
-        var controller = new UsersController(context, CreateCache());
+        var controller = new UsersController(context, CreateCache(), NullLogger<UsersController>.Instance);
         var dto = new RegisterDto { Name = "User1 Novo Nome", Email = "user1@email.com", Password = "novaSenha" };
 
         var result = await controller.Update(1, dto);
@@ -331,7 +332,7 @@ public class UsersControllerTests
         context.Users.Add(new User { Id = 1, Name = "Deletar", Email = "del@email.com", Password = "hash" });
         await context.SaveChangesAsync();
 
-        var controller = new UsersController(context, CreateCache());
+        var controller = new UsersController(context, CreateCache(), NullLogger<UsersController>.Instance);
         var result = await controller.Delete(1);
 
         Assert.IsType<NoContentResult>(result);

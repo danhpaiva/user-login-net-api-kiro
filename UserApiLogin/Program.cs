@@ -125,8 +125,12 @@ var app = builder.Build();
 // ── Migrations automáticas na inicialização ────────────────────────────────
 using (var scope = app.Services.CreateScope())
 {
-    var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+    var db     = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+    var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
+
+    logger.LogInformation("Aplicando migrations pendentes...");
     db.Database.Migrate();
+    logger.LogInformation("Banco de dados pronto");
 }
 
 // ── Middleware Pipeline ────────────────────────────────────────────────────
