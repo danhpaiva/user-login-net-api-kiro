@@ -1,6 +1,8 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Caching.Memory;
 using UserApiLogin.Data;
 using UserApiLogin.DTOs;
 using UserApiLogin.Models;
@@ -9,26 +11,78 @@ namespace UserApiLogin.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
+[EnableRateLimiting("general")]
 public class UsersController : ControllerBase
 {
     private readonly AppDbContext _context;
+    private readonly IMemoryCache _cache;
+    private readonly ILogger<UsersController> _logger;
 
-    public UsersController(AppDbContext context)
+    // Tempo de vida do cache
+    private static readonly TimeSpan CacheDuration = TimeSpan.FromMinutes(2);
+
+    // Prefixos de chave de cache
+    private const string CacheKeyList    = "users_list";
+    private const string CacheKeyById    = "users_id_";
+    private const string CacheKeyVersion = "users_list_version";
+
+    public UsersController(AppDbContext context, IMemoryCache cache, ILogger<UsersController> logger)
     {
         _context = context;
+        _cache   = cache;
+        _logger  = logger;
     }
 
     /// <summary>
-    /// Retorna todos os usuários (sem a senha).
+    /// Retorna os usuários paginados (sem a senha).
     /// </summary>
+    /// <param name="page">Número da página (padrão: 1).</param>
+    /// <param name="pageSize">Itens por página, entre 1 e 50 (padrão: 10).</param>
     [HttpGet]
-    public async Task<IActionResult> GetAll()
+    public async Task<IActionResult> GetAll([FromQuery] int page = 1, [FromQuery] int pageSize = 10)
     {
-        var users = await _context.Users
+        if (page < 1)
+        {
+            _logger.LogWarning("Parâmetro de paginação inválido: page={Page}", page);
+            return BadRequest(new { message = "O parâmetro 'page' deve ser maior que zero." });
+        }
+
+        if (pageSize < 1 || pageSize > 50)
+        {
+            _logger.LogWarning("Parâmetro de paginação inválido: pageSize={PageSize}", pageSize);
+            return BadRequest(new { message = "O parâmetro 'pageSize' deve estar entre 1 e 50." });
+        }
+
+        var cacheKey = $"{CacheKeyList}_v{GetListVersion()}_p{page}_s{pageSize}";
+
+        if (_cache.TryGetValue(cacheKey, out PagedResultDto<UserDto>? result))
+        {
+            _logger.LogDebug("Cache hit para listagem de usuários — page={Page} pageSize={PageSize}", page, pageSize);
+            return Ok(result);
+        }
+
+        _logger.LogDebug("Cache miss para listagem de usuários — page={Page} pageSize={PageSize}. Consultando banco.", page, pageSize);
+
+        var totalItems = await _context.Users.CountAsync();
+
+        var items = await _context.Users
+            .OrderBy(u => u.Id)
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
             .Select(u => new UserDto { Id = u.Id, Name = u.Name, Email = u.Email })
             .ToListAsync();
 
-        return Ok(users);
+        result = new PagedResultDto<UserDto>
+        {
+            Page       = page,
+            PageSize   = pageSize,
+            TotalItems = totalItems,
+            Items      = items
+        };
+
+        _cache.Set(cacheKey, result, CacheDuration);
+
+        return Ok(result);
     }
 
     /// <summary>
@@ -37,12 +91,28 @@ public class UsersController : ControllerBase
     [HttpGet("{id:int}")]
     public async Task<IActionResult> GetById(int id)
     {
+        var cacheKey = $"{CacheKeyById}{id}";
+
+        if (_cache.TryGetValue(cacheKey, out UserDto? dto))
+        {
+            _logger.LogDebug("Cache hit para usuário {UserId}", id);
+            return Ok(dto);
+        }
+
+        _logger.LogDebug("Cache miss para usuário {UserId}. Consultando banco.", id);
+
         var user = await _context.Users.FindAsync(id);
 
         if (user is null)
+        {
+            _logger.LogWarning("Usuário {UserId} não encontrado", id);
             return NotFound(new { message = $"Usuário com Id {id} não encontrado." });
+        }
 
-        return Ok(new UserDto { Id = user.Id, Name = user.Name, Email = user.Email });
+        dto = new UserDto { Id = user.Id, Name = user.Name, Email = user.Email };
+        _cache.Set(cacheKey, dto, CacheDuration);
+
+        return Ok(dto);
     }
 
     /// <summary>
@@ -51,19 +121,28 @@ public class UsersController : ControllerBase
     [HttpPost]
     public async Task<IActionResult> Create([FromBody] RegisterDto dto)
     {
+        _logger.LogInformation("Tentativa de criação de usuário com email {Email}", dto.Email);
+
         var emailExists = await _context.Users.AnyAsync(u => u.Email == dto.Email);
         if (emailExists)
+        {
+            _logger.LogWarning("Criação de usuário rejeitada — email {Email} já cadastrado", dto.Email);
             return Conflict(new { message = "Email já cadastrado." });
+        }
 
         var user = new User
         {
-            Name = dto.Name,
-            Email = dto.Email,
+            Name     = dto.Name,
+            Email    = dto.Email,
             Password = BCrypt.Net.BCrypt.HashPassword(dto.Password)
         };
 
         _context.Users.Add(user);
         await _context.SaveChangesAsync();
+
+        InvalidateListCache();
+
+        _logger.LogInformation("Usuário criado com sucesso — Id={UserId} Email={Email}", user.Id, user.Email);
 
         return CreatedAtAction(nameof(GetById), new { id = user.Id },
             new UserDto { Id = user.Id, Name = user.Name, Email = user.Email });
@@ -75,22 +154,35 @@ public class UsersController : ControllerBase
     [HttpPut("{id:int}")]
     public async Task<IActionResult> Update(int id, [FromBody] RegisterDto dto)
     {
+        _logger.LogInformation("Tentativa de atualização do usuário {UserId}", id);
+
         var user = await _context.Users.FindAsync(id);
 
         if (user is null)
+        {
+            _logger.LogWarning("Atualização rejeitada — usuário {UserId} não encontrado", id);
             return NotFound(new { message = $"Usuário com Id {id} não encontrado." });
+        }
 
         var emailExists = await _context.Users
             .AnyAsync(u => u.Email == dto.Email && u.Id != id);
 
         if (emailExists)
+        {
+            _logger.LogWarning("Atualização rejeitada — email {Email} já está em uso por outro usuário", dto.Email);
             return Conflict(new { message = "Email já está em uso por outro usuário." });
+        }
 
-        user.Name = dto.Name;
-        user.Email = dto.Email;
+        user.Name     = dto.Name;
+        user.Email    = dto.Email;
         user.Password = BCrypt.Net.BCrypt.HashPassword(dto.Password);
 
         await _context.SaveChangesAsync();
+
+        _cache.Remove($"{CacheKeyById}{id}");
+        InvalidateListCache();
+
+        _logger.LogInformation("Usuário {UserId} atualizado com sucesso", id);
 
         return Ok(new UserDto { Id = user.Id, Name = user.Name, Email = user.Email });
     }
@@ -102,14 +194,42 @@ public class UsersController : ControllerBase
     [HttpDelete("{id:int}")]
     public async Task<IActionResult> Delete(int id)
     {
+        _logger.LogInformation("Tentativa de remoção do usuário {UserId}", id);
+
         var user = await _context.Users.FindAsync(id);
 
         if (user is null)
+        {
+            _logger.LogWarning("Remoção rejeitada — usuário {UserId} não encontrado", id);
             return NotFound(new { message = $"Usuário com Id {id} não encontrado." });
+        }
 
         _context.Users.Remove(user);
         await _context.SaveChangesAsync();
 
+        _cache.Remove($"{CacheKeyById}{id}");
+        InvalidateListCache();
+
+        _logger.LogInformation("Usuário {UserId} removido com sucesso", id);
+
         return NoContent();
+    }
+
+    // ── Helpers ────────────────────────────────────────────────────────────
+
+    private long GetListVersion() =>
+        _cache.GetOrCreate(CacheKeyVersion, entry =>
+        {
+            entry.Priority = CacheItemPriority.NeverRemove;
+            return 1L;
+        });
+
+    private void InvalidateListCache()
+    {
+        var current = _cache.GetOrCreate(CacheKeyVersion, _ => 1L);
+        _cache.Set(CacheKeyVersion, current + 1, new MemoryCacheEntryOptions
+        {
+            Priority = CacheItemPriority.NeverRemove
+        });
     }
 }

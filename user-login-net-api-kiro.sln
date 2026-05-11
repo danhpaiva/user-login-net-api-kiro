@@ -1,0 +1,30 @@
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.5.2.0
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "UserApiLogin", "UserApiLogin\UserApiLogin.csproj", "{4E2ABAD4-A171-88F9-1AC8-068A3BDAD425}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "UserApiLogin.Tests", "UserApiLogin.Tests\UserApiLogin.Tests.csproj", "{44BFA90D-CD86-47F0-124F-D61A0234AD4D}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{4E2ABAD4-A171-88F9-1AC8-068A3BDAD425}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{4E2ABAD4-A171-88F9-1AC8-068A3BDAD425}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{4E2ABAD4-A171-88F9-1AC8-068A3BDAD425}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{4E2ABAD4-A171-88F9-1AC8-068A3BDAD425}.Release|Any CPU.Build.0 = Release|Any CPU
+		{44BFA90D-CD86-47F0-124F-D61A0234AD4D}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{44BFA90D-CD86-47F0-124F-D61A0234AD4D}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{44BFA90D-CD86-47F0-124F-D61A0234AD4D}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{44BFA90D-CD86-47F0-124F-D61A0234AD4D}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {109CF878-A008-432D-9031-18FE4A235484}
+	EndGlobalSection
+EndGlobal

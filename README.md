@@ -1,19 +1,32 @@
 # UserApiLogin
 
-REST API para gerenciamento de usuários construída com **.NET 10**, padrão MVC, persistência via **Entity Framework Core + SQLite** e autenticação **JWT Bearer** na rota de exclusão.
+REST API para gerenciamento de usuários construída com **.NET 10**, padrão MVC, persistência via **Entity Framework Core + SQLite** e autenticação **JWT Bearer**.
 
 ---
 
 ## Tecnologias
 
-| Pacote                                        | Versão |
-| --------------------------------------------- | ------ |
-| .NET                                          | 10.0   |
-| Microsoft.EntityFrameworkCore.Sqlite          | 10.0.7 |
-| Microsoft.EntityFrameworkCore.Design          | 10.0.7 |
-| Microsoft.AspNetCore.Authentication.JwtBearer | 10.0.7 |
-| BCrypt.Net-Next                               | 4.2.0  |
-| Swashbuckle.AspNetCore                        | 6.9.0  |
+| Pacote                                                          | Versão |
+| --------------------------------------------------------------- | ------ |
+| .NET                                                            | 10.0   |
+| Microsoft.EntityFrameworkCore.Sqlite                            | 10.0.7 |
+| Microsoft.EntityFrameworkCore.Design                            | 10.0.7 |
+| Microsoft.Extensions.Diagnostics.HealthChecks.EntityFrameworkCore | 10.0.7 |
+| Microsoft.AspNetCore.Authentication.JwtBearer                   | 10.0.7 |
+| BCrypt.Net-Next                                                 | 4.2.0  |
+| Swashbuckle.AspNetCore                                          | 6.9.0  |
+
+---
+
+## Funcionalidades
+
+- **CRUD de usuários** com senhas armazenadas como hash BCrypt
+- **Autenticação JWT** — token exigido na rota de exclusão
+- **Paginação** no `GET /api/users` com metadados de navegação
+- **Cache em memória** com invalidação automática nas operações de escrita
+- **Rate limiting** nativo do ASP.NET — 5 req/min no login, 60 req/min nas demais rotas
+- **Health checks** com verificação do banco de dados
+- **Logs estruturados** com `ILogger` e message templates
 
 ---
 
@@ -22,12 +35,13 @@ REST API para gerenciamento de usuários construída com **.NET 10**, padrão MV
 ```
 UserApiLogin/
 ├── Controllers/
-│   ├── AuthController.cs      # Endpoint de login e geração de token JWT
-│   └── UsersController.cs     # CRUD de usuários
+│   ├── AuthController.cs      # Login e geração de token JWT
+│   └── UsersController.cs     # CRUD de usuários com cache e paginação
 ├── Data/
 │   └── AppDbContext.cs        # Contexto do Entity Framework
 ├── DTOs/
 │   ├── LoginDto.cs            # Payload de autenticação
+│   ├── PagedResultDto.cs      # Envelope de resposta paginada
 │   ├── RegisterDto.cs         # Payload de criação/atualização
 │   └── UserDto.cs             # Resposta pública (sem senha)
 ├── Migrations/                # Migrations geradas pelo EF Core
@@ -35,8 +49,18 @@ UserApiLogin/
 │   └── User.cs                # Modelo de domínio
 ├── Services/
 │   └── TokenService.cs        # Geração de tokens JWT
-├── appsettings.json
+├── appsettings.json           # Configuração de produção
+├── appsettings.Development.json
 └── Program.cs
+
+UserApiLogin.Tests/
+├── Controllers/
+│   ├── AuthControllerTests.cs
+│   └── UsersControllerTests.cs
+├── Helpers/
+│   └── DbContextHelper.cs     # AppDbContext em memória para testes
+└── Services/
+    └── TokenServiceTests.cs
 ```
 
 ---
@@ -53,7 +77,7 @@ public class User
 }
 ```
 
-A senha nunca é exposta nas respostas da API — todos os endpoints retornam o DTO `UserDto` (Id, Name, Email).
+A senha nunca é exposta nas respostas — todos os endpoints retornam `UserDto` (Id, Name, Email).
 
 ---
 
@@ -82,11 +106,21 @@ As configurações ficam em `appsettings.json`. Em produção, substitua os valo
     "Issuer": "UserApiLogin",
     "Audience": "UserApiLoginClients",
     "ExpiresInMinutes": "60"
+  },
+  "Logging": {
+    "LogLevel": {
+      "Default": "Information",
+      "Microsoft.AspNetCore": "Warning",
+      "Microsoft.EntityFrameworkCore": "Warning",
+      "UserApiLogin": "Information"
+    }
   }
 }
 ```
 
 > **Atenção:** nunca versione a `SecretKey` real em repositórios públicos.
+
+Em desenvolvimento (`appsettings.Development.json`) o nível de log é `Debug`, incluindo as queries SQL do EF Core.
 
 ---
 
@@ -106,7 +140,7 @@ URLs padrão:
 | HTTP   | http://localhost:5077  |
 | HTTPS  | https://localhost:7253 |
 
-A documentação interativa (Swagger UI) fica disponível em:
+Swagger UI disponível em:
 
 ```
 http://localhost:5077/swagger
@@ -114,15 +148,26 @@ http://localhost:5077/swagger
 
 ---
 
+## Executando os Testes
+
+```bash
+cd UserApiLogin.Tests
+dotnet test
+```
+
+Os testes usam EF Core InMemory e `NullLogger`, sem dependência de banco ou infraestrutura externa. São 29 testes cobrindo controllers e serviços.
+
+---
+
 ## Endpoints
 
 ### Auth
 
-| Método | Rota              | Autenticação | Descrição                                  |
-| ------ | ----------------- | ------------ | ------------------------------------------ |
-| `POST` | `/api/auth/login` | Não          | Autentica o usuário e retorna um token JWT |
+| Método | Rota              | Auth | Rate limit   | Descrição                        |
+| ------ | ----------------- | ---- | ------------ | -------------------------------- |
+| `POST` | `/api/auth/login` | Não  | 5 req/min    | Autentica e retorna um token JWT |
 
-**Body — POST /api/auth/login**
+**Body**
 ```json
 {
   "email": "joao@email.com",
@@ -146,15 +191,39 @@ http://localhost:5077/swagger
 
 ### Users
 
-| Método   | Rota              | Autenticação        | Descrição                     |
-| -------- | ----------------- | ------------------- | ----------------------------- |
-| `GET`    | `/api/users`      | Não                 | Lista todos os usuários       |
-| `GET`    | `/api/users/{id}` | Não                 | Retorna um usuário pelo Id    |
-| `POST`   | `/api/users`      | Não                 | Cria um novo usuário          |
-| `PUT`    | `/api/users/{id}` | Não                 | Atualiza um usuário existente |
-| `DELETE` | `/api/users/{id}` | **JWT obrigatório** | Remove um usuário             |
+| Método   | Rota              | Auth                | Rate limit   | Descrição                     |
+| -------- | ----------------- | ------------------- | ------------ | ----------------------------- |
+| `GET`    | `/api/users`      | Não                 | 60 req/min   | Lista usuários paginados      |
+| `GET`    | `/api/users/{id}` | Não                 | 60 req/min   | Retorna um usuário pelo Id    |
+| `POST`   | `/api/users`      | Não                 | 60 req/min   | Cria um novo usuário          |
+| `PUT`    | `/api/users/{id}` | Não                 | 60 req/min   | Atualiza um usuário existente |
+| `DELETE` | `/api/users/{id}` | **JWT obrigatório** | 60 req/min   | Remove um usuário             |
 
-**Body — POST /api/users e PUT /api/users/{id}**
+#### Paginação — GET /api/users
+
+Aceita os query params `page` (padrão: `1`) e `pageSize` (padrão: `10`, máximo: `50`).
+
+```
+GET /api/users?page=2&pageSize=5
+```
+
+**Resposta 200**
+```json
+{
+  "page": 2,
+  "pageSize": 5,
+  "totalItems": 42,
+  "totalPages": 9,
+  "hasPreviousPage": true,
+  "hasNextPage": true,
+  "items": [
+    { "id": 6, "name": "...", "email": "..." }
+  ]
+}
+```
+
+#### Body — POST /api/users e PUT /api/users/{id}
+
 ```json
 {
   "name": "João Silva",
@@ -174,6 +243,31 @@ http://localhost:5077/swagger
 
 ---
 
+### Health Checks
+
+| Rota             | Descrição                                          |
+| ---------------- | -------------------------------------------------- |
+| `GET /health`    | Retorna `Healthy` / `Unhealthy` (texto simples)    |
+| `GET /health/ready` | Retorna JSON com status detalhado do banco      |
+
+**Resposta 200 — GET /health/ready**
+```json
+{
+  "status": "Healthy",
+  "checks": [
+    {
+      "name": "database",
+      "status": "Healthy",
+      "duration": "3.21ms"
+    }
+  ]
+}
+```
+
+Se o banco estiver inacessível, o endpoint retorna `503 Unhealthy`.
+
+---
+
 ## Autenticação JWT
 
 O endpoint `DELETE /api/users/{id}` exige um token JWT válido no header `Authorization`.
@@ -181,7 +275,7 @@ O endpoint `DELETE /api/users/{id}` exige um token JWT válido no header `Author
 ### Fluxo
 
 1. Crie um usuário via `POST /api/users`.
-2. Autentique-o via `POST /api/auth/login` e copie o `token` retornado.
+2. Autentique via `POST /api/auth/login` e copie o `token` retornado.
 3. Inclua o token nas requisições protegidas:
 
 ```
@@ -194,6 +288,57 @@ Authorization: Bearer <token>
 2. Clique em **Authorize** (ícone de cadeado).
 3. Informe `Bearer <token>` e confirme.
 4. Execute o endpoint `DELETE`.
+
+---
+
+## Cache
+
+Os endpoints `GET /api/users` e `GET /api/users/{id}` utilizam `IMemoryCache` com TTL de 2 minutos.
+
+A invalidação é automática:
+
+| Operação | Invalida                          |
+| -------- | --------------------------------- |
+| `POST`   | Toda a listagem paginada          |
+| `PUT`    | Entrada do usuário + listagem     |
+| `DELETE` | Entrada do usuário + listagem     |
+
+A listagem usa um número de versão como parte da chave de cache, evitando a necessidade de enumerar e remover entradas individualmente.
+
+---
+
+## Rate Limiting
+
+Implementado com o middleware nativo `Microsoft.AspNetCore.RateLimiting` (sem pacote externo). O limite é por IP, com janela fixa de 1 minuto.
+
+| Política   | Aplicada em        | Limite       |
+| ---------- | ------------------ | ------------ |
+| `auth`     | `AuthController`   | 5 req/min    |
+| `general`  | `UsersController`  | 60 req/min   |
+
+Quando o limite é atingido, a API retorna `429 Too Many Requests`.
+
+---
+
+## Logs
+
+Os logs seguem o padrão de **message templates estruturados**, compatíveis com providers como Seq, Application Insights e OpenTelemetry.
+
+Eventos registrados:
+
+| Evento                        | Nível       | Controller      |
+| ----------------------------- | ----------- | --------------- |
+| Tentativa de login            | Information | Auth            |
+| Login bem-sucedido            | Information | Auth            |
+| Credenciais inválidas         | Warning     | Auth            |
+| Criação de usuário            | Information | Users           |
+| Atualização de usuário        | Information | Users           |
+| Remoção de usuário            | Information | Users           |
+| Email duplicado               | Warning     | Users           |
+| Usuário não encontrado        | Warning     | Users           |
+| Parâmetros de paginação ruins | Warning     | Users           |
+| Cache hit / miss              | Debug       | Users           |
+| Migrations na inicialização   | Information | Program         |
 
 ---
 
@@ -216,15 +361,17 @@ dotnet ef migrations remove
 
 ## Códigos de Resposta
 
-| Código             | Significado                  |
-| ------------------ | ---------------------------- |
-| `200 OK`           | Requisição bem-sucedida      |
-| `201 Created`      | Recurso criado com sucesso   |
-| `204 No Content`   | Recurso removido com sucesso |
-| `400 Bad Request`  | Dados de entrada inválidos   |
-| `401 Unauthorized` | Token ausente ou inválido    |
-| `404 Not Found`    | Recurso não encontrado       |
-| `409 Conflict`     | Email já cadastrado          |
+| Código             | Significado                          |
+| ------------------ | ------------------------------------ |
+| `200 OK`           | Requisição bem-sucedida              |
+| `201 Created`      | Recurso criado com sucesso           |
+| `204 No Content`   | Recurso removido com sucesso         |
+| `400 Bad Request`  | Parâmetros de entrada inválidos      |
+| `401 Unauthorized` | Token ausente ou inválido            |
+| `404 Not Found`    | Recurso não encontrado               |
+| `409 Conflict`     | Email já cadastrado ou em uso        |
+| `429 Too Many Requests` | Limite de requisições atingido  |
+| `503 Service Unavailable` | Banco inacessível (health check) |
 
 ---
 

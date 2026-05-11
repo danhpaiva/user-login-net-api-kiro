@@ -1,5 +1,7 @@
 using System.Text;
+using System.Threading.RateLimiting;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
@@ -36,6 +38,43 @@ builder.Services.AddAuthentication(options =>
 });
 
 builder.Services.AddAuthorization();
+
+// ── Rate Limiting ──────────────────────────────────────────────────────────
+builder.Services.AddRateLimiter(options =>
+{
+    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+
+    // Política restritiva para login — 5 tentativas por minuto por IP
+    options.AddPolicy("auth", httpContext =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            partitionKey: httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            factory: _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit        = 5,
+                Window             = TimeSpan.FromMinutes(1),
+                QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
+                QueueLimit         = 0
+            }));
+
+    // Política geral para demais rotas — 60 requisições por minuto por IP
+    options.AddPolicy("general", httpContext =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            partitionKey: httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            factory: _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit        = 60,
+                Window             = TimeSpan.FromMinutes(1),
+                QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
+                QueueLimit         = 0
+            }));
+});
+
+// ── Health Checks ──────────────────────────────────────────────────────────
+builder.Services.AddHealthChecks()
+    .AddDbContextCheck<AppDbContext>(name: "database", tags: ["db", "ready"]);
+
+// ── Memory Cache ───────────────────────────────────────────────────────────
+builder.Services.AddMemoryCache();
 
 // ── Services ───────────────────────────────────────────────────────────────
 builder.Services.AddScoped<TokenService>();
@@ -86,8 +125,12 @@ var app = builder.Build();
 // ── Migrations automáticas na inicialização ────────────────────────────────
 using (var scope = app.Services.CreateScope())
 {
-    var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+    var db     = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+    var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
+
+    logger.LogInformation("Aplicando migrations pendentes...");
     db.Database.Migrate();
+    logger.LogInformation("Banco de dados pronto");
 }
 
 // ── Middleware Pipeline ────────────────────────────────────────────────────
@@ -98,8 +141,34 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseHttpsRedirection();
+app.UseRateLimiter();
 app.UseAuthentication();
 app.UseAuthorization();
 app.MapControllers();
+
+// ── Health Check Endpoints ─────────────────────────────────────────────────
+app.MapHealthChecks("/health");
+
+app.MapHealthChecks("/health/ready", new Microsoft.AspNetCore.Diagnostics.HealthChecks.HealthCheckOptions
+{
+    Predicate = check => check.Tags.Contains("ready"),
+    ResponseWriter = async (context, report) =>
+    {
+        context.Response.ContentType = "application/json";
+
+        var result = System.Text.Json.JsonSerializer.Serialize(new
+        {
+            status = report.Status.ToString(),
+            checks = report.Entries.Select(e => new
+            {
+                name    = e.Key,
+                status  = e.Value.Status.ToString(),
+                duration = e.Value.Duration.TotalMilliseconds + "ms"
+            })
+        });
+
+        await context.Response.WriteAsync(result);
+    }
+});
 
 app.Run();
