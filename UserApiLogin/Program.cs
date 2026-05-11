@@ -73,6 +73,9 @@ builder.Services.AddRateLimiter(options =>
 builder.Services.AddHealthChecks()
     .AddDbContextCheck<AppDbContext>(name: "database", tags: ["db", "ready"]);
 
+// ── Memory Cache ───────────────────────────────────────────────────────────
+builder.Services.AddMemoryCache();
+
 // ── Services ───────────────────────────────────────────────────────────────
 builder.Services.AddScoped<TokenService>();
 
