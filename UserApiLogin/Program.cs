@@ -37,6 +37,10 @@ builder.Services.AddAuthentication(options =>
 
 builder.Services.AddAuthorization();
 
+// ── Health Checks ──────────────────────────────────────────────────────────
+builder.Services.AddHealthChecks()
+    .AddDbContextCheck<AppDbContext>(name: "database", tags: ["db", "ready"]);
+
 // ── Services ───────────────────────────────────────────────────────────────
 builder.Services.AddScoped<TokenService>();
 
@@ -101,5 +105,30 @@ app.UseHttpsRedirection();
 app.UseAuthentication();
 app.UseAuthorization();
 app.MapControllers();
+
+// ── Health Check Endpoints ─────────────────────────────────────────────────
+app.MapHealthChecks("/health");
+
+app.MapHealthChecks("/health/ready", new Microsoft.AspNetCore.Diagnostics.HealthChecks.HealthCheckOptions
+{
+    Predicate = check => check.Tags.Contains("ready"),
+    ResponseWriter = async (context, report) =>
+    {
+        context.Response.ContentType = "application/json";
+
+        var result = System.Text.Json.JsonSerializer.Serialize(new
+        {
+            status = report.Status.ToString(),
+            checks = report.Entries.Select(e => new
+            {
+                name    = e.Key,
+                status  = e.Value.Status.ToString(),
+                duration = e.Value.Duration.TotalMilliseconds + "ms"
+            })
+        });
+
+        await context.Response.WriteAsync(result);
+    }
+});
 
 app.Run();
