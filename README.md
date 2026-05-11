@@ -228,6 +228,14 @@ dotnet ef migrations remove
 
 ---
 
+## Banco de Dados
+
+Abaixo um exemplo do banco SQLite populado com registros de usuários:
+
+![Banco de dados populado](screenshot/print_database.png)
+
+---
+
 ## Licença
 
 Distribuído sob a licença [MIT](LICENSE).
